@@ -1,0 +1,11 @@
+[package]
+name = "engine"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cubecl = { version = "0.10.0", features = ["cpu"] }
+
+[dev-dependencies]
+minifb = "0.28.0"
+plotters = { version = "0.3.7", default-features = false, features = ["bitmap_backend"] }
