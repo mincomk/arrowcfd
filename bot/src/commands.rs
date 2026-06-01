@@ -2,7 +2,6 @@ use crate::emoji::{self, CustomArrows};
 use crate::{sim, Context, Error};
 use engine::{FluidParams, Solver};
 use poise::serenity_prelude as serenity;
-use poise::Modal as _;
 use std::time::Duration;
 
 const INFLOW_SPEED: f32 = 0.1;
@@ -46,11 +45,6 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let poise::Context::Application(actx) = ctx else {
         return Ok(());
     };
-
-    // Send the modal manually (rather than poise::execute_modal) so we can capture the
-    // modal-submit interaction. Editing *its* original response via `PATCH .../@original`
-    // is the only edit path that keeps custom emoji rendered (discord-api-docs#4431), and
-    // unlike follow-ups it has no per-interaction message cap.
     let defaults = SimModal {
         margin_x: Some("2".to_string()),
         margin_y: Some("2".to_string()),
@@ -58,22 +52,12 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         reynolds: Some("100".to_string()),
         steps: Some("20".to_string()),
     };
-    let custom_id = actx.interaction.id.to_string();
-    actx.interaction
-        .create_response(
-            actx.serenity_context,
-            SimModal::create(Some(defaults), custom_id.clone()),
-        )
-        .await?;
-
-    let Some(modal) = serenity::ModalInteractionCollector::new(&actx.serenity_context.shard)
-        .filter(move |mi| mi.data.custom_id == custom_id)
-        .timeout(Duration::from_secs(300))
-        .await
+    let Some(data) =
+        poise::execute_modal::<_, _, SimModal>(actx, Some(defaults), Some(Duration::from_secs(300)))
+            .await?
     else {
         return Ok(());
     };
-    let data = SimModal::parse(modal.data.clone())?;
 
     let margin_x = parse_or(data.margin_x, 2usize);
     let margin_y = parse_or(data.margin_y, 2usize);
@@ -87,26 +71,14 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let domain = sim::build_domain(&grid, margin_x, margin_y);
     let arrows = CustomArrows::load();
     if !emoji::fits(domain.width, domain.height, &arrows) {
-        modal
-            .create_response(
-                actx.serenity_context,
-                serenity::CreateInteractionResponse::Message(
-                    serenity::CreateInteractionResponseMessage::new()
-                        .ephemeral(true)
-                        .content("Domain too large to render; reduce the grid or margins."),
-                ),
-            )
-            .await?;
+        ctx.send(
+            poise::CreateReply::default()
+                .ephemeral(true)
+                .content("Domain too large to render; reduce the grid or margins."),
+        )
+        .await?;
         return Ok(());
     }
-
-    let http = actx.serenity_context.http.as_ref();
-    let app_id = actx.interaction.application_id;
-
-    // Send the initial Components V2 response immediately. This both satisfies the 3s
-    // interaction-callback deadline (without racing the solver) and sets IS_COMPONENTS_V2,
-    // which is immutable after creation. Real frames stream in via @original edits below.
-    send_v2_initial_response(http, modal.id, &modal.token, "Simulating…").await?;
 
     let still_threshold = params.inflow_speed * 0.05;
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
@@ -123,8 +95,17 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         }
     });
 
+    let Some(content) = rx.recv().await else {
+        return Ok(());
+    };
+    let http = ctx.http();
+    let app_id = actx.interaction.application_id;
+    let token = actx.interaction.token.clone();
+
+    let message_id = create_v2_followup(http, app_id, &token, &content).await?;
+
     while let Some(content) = rx.recv().await {
-        edit_v2_original(http, app_id, &modal.token, &content).await?;
+        edit_v2_followup(http, app_id, &token, message_id, &content).await?;
         tokio::time::sleep(UPDATE_INTERVAL).await;
     }
 
@@ -138,42 +119,53 @@ fn text_display_components(content: &str) -> serde_json::Value {
     serde_json::json!([{ "type": TEXT_DISPLAY, "content": content }])
 }
 
-/// Initial interaction response (callback type 4) carrying a Components V2 text display.
-/// Built manually because serenity 0.12 can't emit the `IS_COMPONENTS_V2` flag.
-async fn send_v2_initial_response(
-    http: &serenity::Http,
-    interaction_id: serenity::InteractionId,
-    token: &str,
-    content: &str,
-) -> Result<(), Error> {
-    let payload = serde_json::json!({
-        "type": 4, // CHANNEL_MESSAGE_WITH_SOURCE
-        "data": {
-            "flags": IS_COMPONENTS_V2,
-            "components": text_display_components(content),
-        },
-    });
-    http.create_interaction_response(interaction_id, token, &payload, vec![])
-        .await?;
-    Ok(())
-}
-
-/// Edit the original interaction response (`PATCH .../@original`). This is the only edit
-/// endpoint that keeps custom emoji rendered (discord-api-docs#4431). Fired manually
-/// because serenity would otherwise try to deserialize the type-10 component in the reply.
-async fn edit_v2_original(
+/// Send an interaction follow-up using a Components V2 text display. Built and fired
+/// manually because serenity 0.12 can neither emit the `IS_COMPONENTS_V2` flag nor
+/// deserialize a type-10 component in the response, so we read the message id from raw JSON.
+async fn create_v2_followup(
     http: &serenity::Http,
     application_id: serenity::ApplicationId,
     token: &str,
+    content: &str,
+) -> Result<serenity::MessageId, Error> {
+    let payload = serde_json::json!({
+        "flags": IS_COMPONENTS_V2,
+        "components": text_display_components(content),
+    });
+    let request = serenity::http::Request::new(
+        serenity::http::Route::WebhookFollowupMessages {
+            application_id,
+            token,
+        },
+        serenity::http::LightMethod::Post,
+    )
+    .body(Some(serde_json::to_vec(&payload)?));
+
+    let value: serde_json::Value = http.fire(request).await?;
+    let id = value["id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or("follow-up response missing message id")?;
+    Ok(serenity::MessageId::new(id))
+}
+
+/// Edit the Components V2 follow-up. The `IS_COMPONENTS_V2` flag is already set on the
+/// message and cannot be toggled, so only the components are sent.
+async fn edit_v2_followup(
+    http: &serenity::Http,
+    application_id: serenity::ApplicationId,
+    token: &str,
+    message_id: serenity::MessageId,
     content: &str,
 ) -> Result<(), Error> {
     let payload = serde_json::json!({
         "components": text_display_components(content),
     });
     let request = serenity::http::Request::new(
-        serenity::http::Route::WebhookOriginalInteractionResponse {
+        serenity::http::Route::WebhookFollowupMessage {
             application_id,
             token,
+            message_id,
         },
         serenity::http::LightMethod::Patch,
     )
