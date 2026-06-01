@@ -1,7 +1,8 @@
 use engine::VelocityField;
 use regex::Regex;
 
-const CONTENT_LIMIT: usize = 2000;
+// Components V2 text display raises the per-message text limit from 2000 to 4000.
+const CONTENT_LIMIT: usize = 4000;
 
 pub trait ArrowSet {
     fn solid(&self) -> &str;

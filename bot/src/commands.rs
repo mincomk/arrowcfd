@@ -46,8 +46,8 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         return Ok(());
     };
     let defaults = SimModal {
-        margin_x: Some("5".to_string()),
-        margin_y: Some("5".to_string()),
+        margin_x: Some("2".to_string()),
+        margin_y: Some("2".to_string()),
         flow_angle: Some("0".to_string()),
         reynolds: Some("100".to_string()),
         steps: Some("20".to_string()),
@@ -59,8 +59,8 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         return Ok(());
     };
 
-    let margin_x = parse_or(data.margin_x, 5usize);
-    let margin_y = parse_or(data.margin_y, 5usize);
+    let margin_x = parse_or(data.margin_x, 2usize);
+    let margin_y = parse_or(data.margin_y, 2usize);
     let params = FluidParams {
         reynolds: parse_or(data.reynolds, 100.0),
         inflow_speed: INFLOW_SPEED,
@@ -98,16 +98,79 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let Some(content) = rx.recv().await else {
         return Ok(());
     };
-    let handle = ctx
-        .send(poise::CreateReply::default().content(content))
-        .await?;
+    let http = ctx.http();
+    let app_id = actx.interaction.application_id;
+    let token = actx.interaction.token.clone();
+
+    let message_id = create_v2_followup(http, app_id, &token, &content).await?;
 
     while let Some(content) = rx.recv().await {
-        handle
-            .edit(ctx, poise::CreateReply::default().content(content))
-            .await?;
+        edit_v2_followup(http, app_id, &token, message_id, &content).await?;
         tokio::time::sleep(UPDATE_INTERVAL).await;
     }
 
+    Ok(())
+}
+
+const IS_COMPONENTS_V2: u64 = 1 << 15;
+const TEXT_DISPLAY: u8 = 10;
+
+fn text_display_components(content: &str) -> serde_json::Value {
+    serde_json::json!([{ "type": TEXT_DISPLAY, "content": content }])
+}
+
+/// Send an interaction follow-up using a Components V2 text display. Built and fired
+/// manually because serenity 0.12 can neither emit the `IS_COMPONENTS_V2` flag nor
+/// deserialize a type-10 component in the response, so we read the message id from raw JSON.
+async fn create_v2_followup(
+    http: &serenity::Http,
+    application_id: serenity::ApplicationId,
+    token: &str,
+    content: &str,
+) -> Result<serenity::MessageId, Error> {
+    let payload = serde_json::json!({
+        "flags": IS_COMPONENTS_V2,
+        "components": text_display_components(content),
+    });
+    let request = serenity::http::Request::new(
+        serenity::http::Route::WebhookFollowupMessages {
+            application_id,
+            token,
+        },
+        serenity::http::LightMethod::Post,
+    )
+    .body(Some(serde_json::to_vec(&payload)?));
+
+    let value: serde_json::Value = http.fire(request).await?;
+    let id = value["id"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .ok_or("follow-up response missing message id")?;
+    Ok(serenity::MessageId::new(id))
+}
+
+/// Edit the Components V2 follow-up. The `IS_COMPONENTS_V2` flag is already set on the
+/// message and cannot be toggled, so only the components are sent.
+async fn edit_v2_followup(
+    http: &serenity::Http,
+    application_id: serenity::ApplicationId,
+    token: &str,
+    message_id: serenity::MessageId,
+    content: &str,
+) -> Result<(), Error> {
+    let payload = serde_json::json!({
+        "components": text_display_components(content),
+    });
+    let request = serenity::http::Request::new(
+        serenity::http::Route::WebhookFollowupMessage {
+            application_id,
+            token,
+            message_id,
+        },
+        serenity::http::LightMethod::Patch,
+    )
+    .body(Some(serde_json::to_vec(&payload)?));
+
+    let _: serde_json::Value = http.fire(request).await?;
     Ok(())
 }
