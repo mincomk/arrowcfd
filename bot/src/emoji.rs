@@ -1,5 +1,7 @@
+use crate::grid::Cell;
 use engine::VelocityField;
 use regex::Regex;
+use std::collections::HashMap;
 
 // Components V2 text display raises the per-message text limit from 2000 to 4000.
 const CONTENT_LIMIT: usize = 4000;
@@ -67,12 +69,42 @@ impl ArrowSet for CustomArrows {
     }
 }
 
-pub fn render_field(field: &VelocityField, arrows: &impl ArrowSet, still_threshold: f32) -> String {
+/// Look up the source emoji markup for a solid domain voxel, inverting the placement
+/// in `sim::build_domain` (`grid.set(margin_x + c, (dh-1) - (margin_y + r), true)`).
+fn solid_markup<'a>(
+    cells: &[Vec<Cell>],
+    margin_x: usize,
+    margin_y: usize,
+    domain_height: usize,
+    solids: &'a HashMap<u64, String>,
+    x: usize,
+    y: usize,
+) -> Option<&'a str> {
+    let c = x.checked_sub(margin_x)?;
+    let r = (domain_height - 1).checked_sub(margin_y + y)?;
+    if let Cell::Emoji { id, .. } = *cells.get(r)?.get(c)? {
+        return solids.get(&id).map(String::as_str);
+    }
+    None
+}
+
+pub fn render_field(
+    field: &VelocityField,
+    arrows: &impl ArrowSet,
+    still_threshold: f32,
+    cells: &[Vec<Cell>],
+    margin_x: usize,
+    margin_y: usize,
+    solids: &HashMap<u64, String>,
+) -> String {
     let mut out = String::new();
     for y in (0..field.height).rev() {
         for x in 0..field.width {
             if field.is_solid(x, y) {
-                out.push_str(arrows.solid());
+                match solid_markup(cells, margin_x, margin_y, field.height, solids, x, y) {
+                    Some(markup) => out.push_str(markup),
+                    None => out.push_str(arrows.solid()),
+                }
             } else {
                 let (ux, uy) = field.at(x, y);
                 if field.magnitude(x, y) < still_threshold {
@@ -89,6 +121,11 @@ pub fn render_field(field: &VelocityField, arrows: &impl ArrowSet, still_thresho
     out
 }
 
+/// Upper bound on a re-uploaded obstacle emoji's markup length: `<a:` + name
+/// (`e` + up to a 20-digit source id) + `:` + up to a 20-digit emoji id + `>`.
+const SOLID_MARKUP_MAX: usize = 48;
+
 pub fn fits(width: usize, height: usize, arrows: &impl ArrowSet) -> bool {
-    height * (width * arrows.cell_len() + 1) <= CONTENT_LIMIT
+    let cell_len = arrows.cell_len().max(SOLID_MARKUP_MAX);
+    height * (width * cell_len + 1) <= CONTENT_LIMIT
 }

@@ -31,8 +31,8 @@ fn parse_or<T: std::str::FromStr>(value: Option<String>, default: T) -> T {
 
 #[poise::command(context_menu_command = "Solve")]
 pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error> {
-    let grid = crate::grid::extract_grid(&msg.content);
-    if grid.is_empty() || grid[0].is_empty() {
+    let cells = crate::grid::extract_grid(&msg.content);
+    if cells.is_empty() || cells[0].is_empty() {
         ctx.send(
             poise::CreateReply::default()
                 .ephemeral(true)
@@ -68,7 +68,11 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     };
     let steps = parse_or(data.steps, 20usize).max(1);
 
-    let domain = sim::build_domain(&grid, margin_x, margin_y);
+    let obstacle: Vec<Vec<bool>> = cells
+        .iter()
+        .map(|row| row.iter().map(crate::grid::Cell::is_solid).collect())
+        .collect();
+    let domain = sim::build_domain(&obstacle, margin_x, margin_y);
     let arrows = CustomArrows::load();
     if !emoji::fits(domain.width, domain.height, &arrows) {
         ctx.send(
@@ -81,6 +85,13 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     }
 
     let still_threshold = params.inflow_speed * 0.05;
+
+    // Import the obstacle emojis into the application emoji store so the render can
+    // draw the original drawing instead of solid boxes.
+    ctx.http()
+        .set_application_id(actx.interaction.application_id);
+    let solids = crate::emoji_store::resolve_solids(ctx.http(), &cells, 128).await;
+
     let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(1);
 
     std::thread::spawn(move || {
@@ -88,7 +99,15 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
             Solver::<cubecl::cpu::CpuRuntime>::new(&Default::default(), &domain, &params);
         for _ in 0..MAX_UPDATES {
             solver.step_n(steps);
-            let content = emoji::render_field(&solver.velocity_field(), &arrows, still_threshold);
+            let content = emoji::render_field(
+                &solver.velocity_field(),
+                &arrows,
+                still_threshold,
+                &cells,
+                margin_x,
+                margin_y,
+                &solids,
+            );
             if tx.blocking_send(content).is_err() {
                 break;
             }

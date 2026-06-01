@@ -1,5 +1,6 @@
 mod commands;
 mod emoji;
+mod emoji_store;
 mod grid;
 mod sim;
 
