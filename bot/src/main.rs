@@ -1,5 +1,7 @@
 mod commands;
+mod emoji;
 mod grid;
+mod sim;
 
 use poise::serenity_prelude as serenity;
 
@@ -7,9 +9,22 @@ pub struct Data {}
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Context<'a> = poise::Context<'a, Data, Error>;
 
+fn warmup() {
+    let grid = engine::Grid::new(8, 8);
+    let mut solver = engine::Solver::<cubecl::cpu::CpuRuntime>::new(
+        &Default::default(),
+        &grid,
+        &engine::FluidParams::default(),
+    );
+    solver.step_n(1);
+    let _ = solver.velocity_field();
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
+
+    std::thread::spawn(warmup).join().unwrap();
 
     let token = std::env::var("DISCORD_TOKEN").expect("missing DISCORD_TOKEN");
     let intents = serenity::GatewayIntents::non_privileged();

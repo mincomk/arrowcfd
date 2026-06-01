@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+cubecl = { version = "0.10.0", features = ["cpu"] }
 dotenvy = "0.15.7"
+engine = { version = "0.1.0", path = "../engine" }
 poise = "0.6.2"
 regex = "1.12.3"
 serenity = "0.12.5"
