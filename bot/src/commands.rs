@@ -1,4 +1,4 @@
-use crate::emoji::{self, UnicodeArrows};
+use crate::emoji::{self, CustomArrows};
 use crate::{sim, Context, Error};
 use engine::{FluidParams, Solver};
 use poise::serenity_prelude as serenity;
@@ -45,14 +45,22 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let poise::Context::Application(actx) = ctx else {
         return Ok(());
     };
+    let defaults = SimModal {
+        margin_x: Some("5".to_string()),
+        margin_y: Some("5".to_string()),
+        flow_angle: Some("0".to_string()),
+        reynolds: Some("100".to_string()),
+        steps: Some("20".to_string()),
+    };
     let Some(data) =
-        poise::execute_modal::<_, _, SimModal>(actx, None, Some(Duration::from_secs(300))).await?
+        poise::execute_modal::<_, _, SimModal>(actx, Some(defaults), Some(Duration::from_secs(300)))
+            .await?
     else {
         return Ok(());
     };
 
-    let margin_x = parse_or(data.margin_x, 10usize);
-    let margin_y = parse_or(data.margin_y, 10usize);
+    let margin_x = parse_or(data.margin_x, 5usize);
+    let margin_y = parse_or(data.margin_y, 5usize);
     let params = FluidParams {
         reynolds: parse_or(data.reynolds, 100.0),
         inflow_speed: INFLOW_SPEED,
@@ -61,7 +69,7 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let steps = parse_or(data.steps, 20usize).max(1);
 
     let domain = sim::build_domain(&grid, margin_x, margin_y);
-    let arrows = UnicodeArrows;
+    let arrows = CustomArrows::load();
     if !emoji::fits(domain.width, domain.height, &arrows) {
         ctx.send(
             poise::CreateReply::default()
@@ -90,19 +98,13 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
     let Some(content) = rx.recv().await else {
         return Ok(());
     };
-    let mut message = msg
-        .channel_id
-        .send_message(
-            ctx.http(),
-            serenity::CreateMessage::new()
-                .content(content)
-                .reference_message(&msg),
-        )
+    let handle = ctx
+        .send(poise::CreateReply::default().content(content))
         .await?;
 
     while let Some(content) = rx.recv().await {
-        message
-            .edit(ctx.http(), serenity::EditMessage::new().content(content))
+        handle
+            .edit(ctx, poise::CreateReply::default().content(content))
             .await?;
         tokio::time::sleep(UPDATE_INTERVAL).await;
     }

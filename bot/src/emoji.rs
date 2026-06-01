@@ -1,4 +1,5 @@
 use engine::VelocityField;
+use regex::Regex;
 
 const CONTENT_LIMIT: usize = 2000;
 
@@ -9,27 +10,59 @@ pub trait ArrowSet {
     fn cell_len(&self) -> usize;
 }
 
-pub struct UnicodeArrows;
+/// Custom Discord arrow emojis from `emojis.json` (`arrow_0`..`arrow_359`, keyed by
+/// integer degree CCW from the right-pointing direction).
+pub struct CustomArrows {
+    arrows: Vec<String>,
+    solid: String,
+    still: String,
+    cell_len: usize,
+}
 
-const UNICODE_DIRECTIONS: [&str; 4] = ["➡\u{fe0f}", "⬆\u{fe0f}", "⬅\u{fe0f}", "⬇\u{fe0f}"];
+impl CustomArrows {
+    pub fn load() -> Self {
+        let raw = include_str!("../emojis.json");
+        let re = Regex::new(r#""arrow_(\d+)"\s*:\s*"(a?\d+)""#).unwrap();
 
-impl ArrowSet for UnicodeArrows {
+        let mut arrows = vec![String::new(); 360];
+        for caps in re.captures_iter(raw) {
+            let deg: usize = caps[1].parse().unwrap();
+            if deg < 360 {
+                // A leading `a` on the id marks an animated emoji: strip it and use the
+                // animated markup form `<a:name:id>`.
+                arrows[deg] = match caps[2].strip_prefix('a') {
+                    Some(id) => format!("<a:arrow_{deg}:{id}>"),
+                    None => format!("<:arrow_{deg}:{}>", &caps[2]),
+                };
+            }
+        }
+
+        let cell_len = arrows.iter().map(String::len).max().unwrap_or(0);
+        Self {
+            arrows,
+            solid: "⬛".to_string(),
+            still: "⬜".to_string(),
+            cell_len,
+        }
+    }
+}
+
+impl ArrowSet for CustomArrows {
     fn solid(&self) -> &str {
-        "⬛"
+        &self.solid
     }
 
     fn still(&self) -> &str {
-        "⬜"
+        &self.still
     }
 
     fn arrow(&self, angle_deg: f32) -> &str {
-        let normalized = angle_deg.rem_euclid(360.0);
-        let bucket = (normalized / 90.0).round() as usize % UNICODE_DIRECTIONS.len();
-        UNICODE_DIRECTIONS[bucket]
+        let deg = angle_deg.rem_euclid(360.0).round() as usize % 360;
+        &self.arrows[deg]
     }
 
     fn cell_len(&self) -> usize {
-        2
+        self.cell_len
     }
 }
 
