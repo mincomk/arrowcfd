@@ -6,13 +6,26 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = nixpkgs.legacyPackages.${system};
-      in {
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
+      let
+        pkgs = nixpkgs.legacyPackages.${system};
+      in
+      {
         devShells.default = pkgs.mkShell rec {
           name = "egui";
-          nativeBuildInputs = with pkgs; [ pkg-config libxkbcommon wayland libGL ];
+          nativeBuildInputs = with pkgs; [
+            pkg-config
+            libxkbcommon
+            wayland
+            libGL
+          ];
 
           buildInputs = with pkgs; [
             wayland
@@ -31,18 +44,18 @@
             libxkbcommon
             vulkan-loader
             glibc.dev
+
+            stdenv.cc.cc.lib
           ];
 
           shellHook = ''
-            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${
-              builtins.toString (pkgs.lib.makeLibraryPath buildInputs)
-            }";
+            export LD_LIBRARY_PATH="$LD_LIBRARY_PATH:${builtins.toString (pkgs.lib.makeLibraryPath buildInputs)}";
 
             export BINDGEN_EXTRA_CLANG_ARGS="\
               -isystem ${pkgs.linuxHeaders}/include \
               -isystem ${pkgs.glibc.dev}/include"
           '';
         };
-      });
+      }
+    );
 }
-

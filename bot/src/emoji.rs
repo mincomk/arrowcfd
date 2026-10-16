@@ -69,8 +69,6 @@ impl ArrowSet for CustomArrows {
     }
 }
 
-/// Look up the source emoji markup for a solid domain voxel, inverting the placement
-/// in `sim::build_domain` (`grid.set(margin_x + c, (dh-1) - (margin_y + r), true)`).
 fn solid_markup<'a>(
     cells: &[Vec<Cell>],
     margin_x: usize,

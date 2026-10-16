@@ -86,9 +86,6 @@ fn main() {
     }
 }
 
-/// Fill the RGB buffer with a velocity-magnitude colormap (one voxel = SCALE^2
-/// pixels). Image rows run top-to-bottom while the grid's y runs bottom-to-top,
-/// so we flip y.
 fn paint_heatmap(field: &VelocityField, rgb: &mut [u8], ref_speed: f32) {
     for py in 0..WH {
         let gy = GH - 1 - (py / SCALE).min(GH - 1);
@@ -108,8 +105,6 @@ fn paint_heatmap(field: &VelocityField, rgb: &mut [u8], ref_speed: f32) {
     }
 }
 
-/// Overlay velocity vectors as black arrows using plotters, drawing directly
-/// onto the already-painted RGB buffer.
 fn draw_quiver(field: &VelocityField, rgb: &mut [u8]) {
     let root = BitMapBackend::with_buffer(rgb, (WW as u32, WH as u32)).into_drawing_area();
 
@@ -129,21 +124,18 @@ fn draw_quiver(field: &VelocityField, rgb: &mut [u8]) {
 
             root.draw(&PathElement::new(vec![(x0, y0), (x1, y1)], BLACK))
                 .ok();
-            // Small dot marks the arrow tip (direction of flow).
             root.draw(&Circle::new((x1, y1), 1, BLACK.filled())).ok();
         }
     }
     root.present().ok();
 }
 
-/// Pack an RGB byte buffer into minifb's 0RGB `u32` pixels.
 fn pack_argb(rgb: &[u8], frame: &mut [u32]) {
     for (px, chunk) in frame.iter_mut().zip(rgb.chunks_exact(3)) {
         *px = ((chunk[0] as u32) << 16) | ((chunk[1] as u32) << 8) | (chunk[2] as u32);
     }
 }
 
-/// Blue -> cyan -> green -> yellow -> red ramp for t in [0, 1].
 fn colormap(t: f32) -> (u8, u8, u8) {
     let r = (1.5 - (4.0 * t - 3.0).abs()).clamp(0.0, 1.0);
     let g = (1.5 - (4.0 * t - 2.0).abs()).clamp(0.0, 1.0);

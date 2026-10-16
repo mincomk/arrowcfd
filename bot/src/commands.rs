@@ -7,6 +7,7 @@ use std::time::Duration;
 const INFLOW_SPEED: f32 = 0.1;
 const MAX_UPDATES: usize = 120;
 const UPDATE_INTERVAL: Duration = Duration::from_millis(800);
+const SIM_STEPS: usize = 20;
 
 #[derive(poise::Modal)]
 #[name = "Flow Simulation"]
@@ -19,8 +20,8 @@ struct SimModal {
     flow_angle: Option<String>,
     #[name = "Reynolds"]
     reynolds: Option<String>,
-    #[name = "Steps / update"]
-    steps: Option<String>,
+    #[name = "Grid Complexity"]
+    grid_complexity: Option<String>,
 }
 
 fn parse_or<T: std::str::FromStr>(value: Option<String>, default: T) -> T {
@@ -50,7 +51,7 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         margin_y: Some("2".to_string()),
         flow_angle: Some("0".to_string()),
         reynolds: Some("100".to_string()),
-        steps: Some("20".to_string()),
+        grid_complexity: Some("1".to_string()),
     };
     let Some(data) =
         poise::execute_modal::<_, _, SimModal>(actx, Some(defaults), Some(Duration::from_secs(300)))
@@ -66,15 +67,17 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
         inflow_speed: INFLOW_SPEED,
         flow_angle_deg: parse_or(data.flow_angle, 0.0),
     };
-    let steps = parse_or(data.steps, 20usize).max(1);
+    let steps = SIM_STEPS.max(1);
+    let complexity = parse_or(data.grid_complexity, 1usize).clamp(1, 4);
 
     let obstacle: Vec<Vec<bool>> = cells
         .iter()
         .map(|row| row.iter().map(crate::grid::Cell::is_solid).collect())
         .collect();
-    let domain = sim::build_domain(&obstacle, margin_x, margin_y);
+    let coarse = sim::build_domain(&obstacle, margin_x, margin_y);
+    let domain = sim::refine(&coarse, complexity);
     let arrows = CustomArrows::load();
-    if !emoji::fits(domain.width, domain.height, &arrows) {
+    if !emoji::fits(coarse.width, coarse.height, &arrows) {
         ctx.send(
             poise::CreateReply::default()
                 .ephemeral(true)
@@ -86,8 +89,6 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
 
     let still_threshold = params.inflow_speed * 0.05;
 
-    // Import the obstacle emojis into the application emoji store so the render can
-    // draw the original drawing instead of solid boxes.
     ctx.http()
         .set_application_id(actx.interaction.application_id);
     let solids = crate::emoji_store::resolve_solids(ctx.http(), &cells, 128).await;
@@ -99,8 +100,9 @@ pub async fn solve(ctx: Context<'_>, msg: serenity::Message) -> Result<(), Error
             Solver::<cubecl::cpu::CpuRuntime>::new(&Default::default(), &domain, &params);
         for _ in 0..MAX_UPDATES {
             solver.step_n(steps);
+            let field = sim::merge_field(&solver.velocity_field(), complexity);
             let content = emoji::render_field(
-                &solver.velocity_field(),
+                &field,
                 &arrows,
                 still_threshold,
                 &cells,
@@ -138,9 +140,6 @@ fn text_display_components(content: &str) -> serde_json::Value {
     serde_json::json!([{ "type": TEXT_DISPLAY, "content": content }])
 }
 
-/// Send an interaction follow-up using a Components V2 text display. Built and fired
-/// manually because serenity 0.12 can neither emit the `IS_COMPONENTS_V2` flag nor
-/// deserialize a type-10 component in the response, so we read the message id from raw JSON.
 async fn create_v2_followup(
     http: &serenity::Http,
     application_id: serenity::ApplicationId,
@@ -168,8 +167,6 @@ async fn create_v2_followup(
     Ok(serenity::MessageId::new(id))
 }
 
-/// Edit the Components V2 follow-up. The `IS_COMPONENTS_V2` flag is already set on the
-/// message and cannot be toggled, so only the components are sent.
 async fn edit_v2_followup(
     http: &serenity::Http,
     application_id: serenity::ApplicationId,

@@ -12,13 +12,6 @@ fn markup(animated: bool, name: &str, id: serenity::EmojiId) -> String {
     }
 }
 
-/// Resolve every distinct obstacle emoji in `cells` to an application-owned emoji,
-/// returning a map from the *source* emoji id to its renderable markup.
-///
-/// For each source emoji we use a deterministic application-emoji name `e{id}`:
-/// if one already exists it is reused, otherwise the image is downloaded from the
-/// Discord CDN and uploaded to the application emoji store. Source emojis that fail
-/// to fetch or upload are simply omitted (the render falls back to a solid box).
 pub async fn resolve_solids(
     http: &serenity::Http,
     cells: &[Vec<Cell>],

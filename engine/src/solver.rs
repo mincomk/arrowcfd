@@ -112,7 +112,6 @@ impl<R: Runtime> Solver<R> {
         }
     }
 
-    /// Advance the simulation by a single timestep.
     pub fn step(&mut self) {
         let plane = (self.nx * self.ny) as usize;
         unsafe {
@@ -137,15 +136,12 @@ impl<R: Runtime> Solver<R> {
         std::mem::swap(&mut self.f_a, &mut self.f_b);
     }
 
-    /// Advance the simulation by `n` timesteps.
     pub fn step_n(&mut self, n: usize) {
         for _ in 0..n {
             self.step();
         }
     }
 
-    /// Read back the current distributions and recompute the macroscopic
-    /// velocity vector for every voxel. Solid voxels report `(0, 0)`.
     pub fn velocity_field(&self) -> VelocityField {
         let plane = (self.nx * self.ny) as usize;
         let bytes = self.client.read_one(self.f_a.clone()).unwrap();

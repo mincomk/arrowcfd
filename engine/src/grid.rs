@@ -8,12 +8,10 @@
 pub struct Grid {
     pub width: usize,
     pub height: usize,
-    /// `true` = solid wall, `false` = open fluid. Length is `width * height`.
     pub solid: Vec<bool>,
 }
 
 impl Grid {
-    /// An all-fluid grid (no obstacles).
     pub fn new(width: usize, height: usize) -> Self {
         Self {
             width,
@@ -22,7 +20,6 @@ impl Grid {
         }
     }
 
-    /// Build a grid from a predicate: `f(x, y) == true` marks a solid voxel.
     pub fn from_fn(width: usize, height: usize, f: impl Fn(usize, usize) -> bool) -> Self {
         let mut solid = vec![false; width * height];
         for y in 0..height {
@@ -47,7 +44,6 @@ impl Grid {
         self.solid[self.index(x, y)]
     }
 
-    /// Mark a voxel solid (`true`) or open (`false`).
     pub fn set(&mut self, x: usize, y: usize, solid: bool) {
         let i = self.index(x, y);
         self.solid[i] = solid;
